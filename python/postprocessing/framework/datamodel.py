@@ -60,6 +60,7 @@ class Object:
         self._event = event
         self._prefix = prefix + "_"
         self._index = index
+        self.stored_p4 = None
 
     def __getattr__(self, name):
         if name in self.__dict__:
@@ -76,14 +77,20 @@ class Object:
 
     def __getitem__(self, attr):
         return self.__getattr__(attr)
+    
+    
 
     def p4(self, corr_pt=None):
-        ret = ROOT.TLorentzVector()
         if corr_pt == None:
-            ret.SetPtEtaPhiM(self.pt, self.eta, self.phi, self.mass)
+            if self.stored_p4 is None:
+                ret = ROOT.TLorentzVector()
+                ret.SetPtEtaPhiM(self.pt, self.eta, self.phi, self.mass)
+                self.stored_p4 = ret
+            return self.stored_p4
         else:
+            ret = ROOT.TLorentzVector()
             ret.SetPtEtaPhiM(corr_pt, self.eta, self.phi, self.mass)
-        return ret
+            return ret
 
     def DeltaR(self, other):
         if isinstance(other, ROOT.TLorentzVector):

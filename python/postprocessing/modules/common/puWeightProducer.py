@@ -60,7 +60,7 @@ class puWeightProducer(Module):
     def loadHisto(self, filename, hname):
         tf = ROOT.TFile.Open(filename)
         hist = tf.Get(hname)
-        hist.SetDirectory(None)
+        hist.SetDirectory(0)
         tf.Close()
         return hist
 

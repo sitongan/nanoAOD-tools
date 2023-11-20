@@ -77,7 +77,7 @@ def readBranch(tree, branchName):
     else:
         branch = tree.GetBranch(branchName)
         if not branch:
-            raise RuntimeError("Unknown branch %s" % branchName)
+            raise AttributeError("Unknown branch %s" % branchName)
         if not tree.GetBranchStatus(branchName):
             raise RuntimeError("Branch %s has status=0" % branchName)
         leaf = branch.GetLeaf(branchName)
