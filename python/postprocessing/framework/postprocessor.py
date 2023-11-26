@@ -157,7 +157,20 @@ class PostProcessor:
                 ftoread, toBeDeleted = self.prefetchFile(fname)
                 inFile = ROOT.TFile.Open(ftoread)
             else:
-                inFile = ROOT.TFile.Open(fname)
+                attempts = 0
+                max_attempts = 5
+                wait_time = 120
+                while attempts < max_attempts:
+                    try:
+                        print(f"Attemp {attempts}, opening {fname}")
+                        inFile = ROOT.TFile.Open(fname)
+                        break
+                    except Exception as e:
+                        print(f"Error opening file '{fname}': {e}")
+                        attempts += 1
+                        if attempts < max_attempts:
+                            print(f"Waiting for {wait_time} seconds before retrying...")
+                            time.sleep(wait_time)
 
             # get input tree
             inTree = inFile.Get("Events")
