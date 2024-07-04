@@ -3,100 +3,54 @@ import os
 import types
 from math import *
 from PhysicsTools.HeppyCore.utils.deltar import *
-
+import correctionlib._core as core
 
 class JetReCalibrator:
     def __init__(
         self,
+        era,
         globalTag,
         jetFlavour,
         doResidualJECs,
-        jecPath,
         upToLevel=3,
-        calculateSeparateCorrections=False,
-        calculateType1METCorrection=False,
-        type1METParams={
-            'jetPtThreshold': 15.,
-            'skipEMfractionThreshold': 0.9,
-            'skipMuons': True
-        }
      ):
         """Create a corrector object that reads the payloads from the text
         dumps of a global tag under CMGTools/RootTools/data/jec (see the
         getJec.py there to make the dumps). It will apply the L1,L2,L3 and
         possibly the residual corrections to the jets. If configured to do so,
         it will also compute the type1 MET corrections."""
+        self.era = era
         self.globalTag = globalTag
-        self.jetFlavour = jetFlavour
+        self.jetType = jetFlavour
         self.doResidualJECs = doResidualJECs
-        self.jecPath = jecPath
         self.upToLevel = upToLevel
-        self.calculateType1METCorrection = calculateType1METCorrection
-        self.calculateSeparateCorrections = calculateSeparateCorrections
-        self.type1METParams = type1METParams
-        # Make base corrections
-        # "%s/src/CMGTools/RootTools/data/jec" % os.environ['CMSSW_BASE'];
-        path = os.path.expandvars(jecPath)
-        self.L1JetPar = ROOT.JetCorrectorParameters(
-            "%s/%s_L1FastJet_%s.txt" % (path, globalTag, jetFlavour), "")
-        self.L2JetPar = ROOT.JetCorrectorParameters(
-            "%s/%s_L2Relative_%s.txt" % (path, globalTag, jetFlavour), "")
-        self.L3JetPar = ROOT.JetCorrectorParameters(
-            "%s/%s_L3Absolute_%s.txt" % (path, globalTag, jetFlavour), "")
-        self.vPar = ROOT.vector(ROOT.JetCorrectorParameters)()
-        self.vPar.push_back(self.L1JetPar)
-        if upToLevel >= 2:
-            self.vPar.push_back(self.L2JetPar)
-        if upToLevel >= 3:
-            self.vPar.push_back(self.L3JetPar)
-        # Add residuals if needed
-        if doResidualJECs:
-            self.ResJetPar = ROOT.JetCorrectorParameters(
-                "%s/%s_L2L3Residual_%s.txt" % (path, globalTag, jetFlavour))
-            self.vPar.push_back(self.ResJetPar)
-        # Step3 (Construct a FactorizedJetCorrector object)
-        self.JetCorrector = ROOT.FactorizedJetCorrector(self.vPar)
-        if os.path.exists("%s/%s_Uncertainty_%s.txt" %
-                          (path, globalTag, jetFlavour)):
-            self.JetUncertainty = ROOT.JetCorrectionUncertainty(
-                "%s/%s_Uncertainty_%s.txt" % (path, globalTag, jetFlavour))
-        elif os.path.exists("%s/Uncertainty_FAKE.txt" % path):
-            self.JetUncertainty = ROOT.JetCorrectionUncertainty(
-                "%s/Uncertainty_FAKE.txt" % path)
+        self.pogdir = "/cvmfs/cms.cern.ch/rsync/cms-nanoAOD/jsonpog-integration/"
+        levels = {1: "L1FastJet", 2:'L2Relative', 3:'L3Absolute'}
+        #['', '', '', '']
+        uptolvls = list(range(1, upToLevel+1))
+        if 'Puppi' in self.jetType and 1 in uptolvls:
+            uptolvls.remove(1)
+        if doResidualJECs and upToLevel == 3:
+            self.level = ["L1L2L3Res"]
+            #Puppijet doesn't have L1 correction. But using 'L1L2L3Res' is correct - tested.
         else:
-            print(
-                'Missing JEC uncertainty file "%s/%s_Uncertainty_%s.txt", so jet energy uncertainties will not be available'
-                % (path, globalTag, jetFlavour))
-            self.JetUncertainty = None
-        self.separateJetCorrectors = {}
-        if self.calculateSeparateCorrections or self.calculateType1METCorrection:
-            self.vParL1 = ROOT.vector(ROOT.JetCorrectorParameters)()
-            self.vParL1.push_back(self.L1JetPar)
-            self.separateJetCorrectors["L1"] = ROOT.FactorizedJetCorrector(
-                self.vParL1)
-            if upToLevel >= 2 and self.calculateSeparateCorrections:
-                self.vParL2 = ROOT.vector(ROOT.JetCorrectorParameters)()
-                for i in [self.L1JetPar, self.L2JetPar]:
-                    self.vParL2.push_back(i)
-                self.separateJetCorrectors[
-                    "L1L2"] = ROOT.FactorizedJetCorrector(self.vParL2)
-            if upToLevel >= 3 and self.calculateSeparateCorrections:
-                self.vParL3 = ROOT.vector(ROOT.JetCorrectorParameters)()
-                for i in [self.L1JetPar, self.L2JetPar, self.L3JetPar]:
-                    self.vParL3.push_back(i)
-                self.separateJetCorrectors[
-                    "L1L2L3"] = ROOT.FactorizedJetCorrector(self.vParL3)
-            if doResidualJECs and self.calculateSeparateCorrections:
-                self.vParL3Res = ROOT.vector(ROOT.JetCorrectorParameters)()
-                for i in [
-                        self.L1JetPar, self.L2JetPar, self.L3JetPar,
-                        self.ResJetPar
-                ]:
-                    self.vParL3Res.push_back(i)
-                self.separateJetCorrectors[
-                    "L1L2L3Res"] = ROOT.FactorizedJetCorrector(self.vParL3Res)
+            self.level=[]
+            for i in uptolvls:
+                self.level.append(levels[i])
+            if doResidualJECs:
+                self.level.append('L2L3Residual')
+            
+        
+        if "AK4" in self.jetType:
+            fname = os.path.join(self.pogdir, f"POG/JME/{self.era}/jet_jerc.json.gz")
+            print("\n JetReCalibrator Loading JSON file: {}".format(fname))
+            self.cset = core.CorrectionSet.from_file(os.path.join(fname))
+        elif "AK8" in self.jetType:
+            fname_ak8 = os.path.join(self.pogdir, f"POG/JME/{self.era}/fatJet_jerc.json.gz")
+            print("\n JetReCalibrator Loading JSON file: {}".format(fname_ak8))
+            self.cset = core.CorrectionSet.from_file(os.path.join(fname_ak8))
 
-    def getCorrection(self, jet, rho, delta=0, corrector=None):
+    def __deprecated_getCorrection(self, jet, rho, delta=0, corrector=None):
         if not corrector:
             corrector = self.JetCorrector
         if corrector != self.JetCorrector and delta != 0:
@@ -128,11 +82,7 @@ class JetReCalibrator:
 
     def correct(self,
                 jet,
-                rho,
-                delta=0,
-                addCorr=False,
-                addShifts=False,
-                metShift=[0, 0]):
+                rho):
         """Corrects a jet energy (optionally shifting it also by delta times
         the JEC uncertainty)
 
@@ -149,7 +99,21 @@ class JetReCalibrator:
 
         """
         raw = 1. - jet.rawFactor
-        corr = self.getCorrection(jet, rho, delta)
+        corr = 1.0
+        for l in self.level:
+                key = "{}_{}_{}".format(self.globalTag, l, self.jetType)
+                if l == "L1L2L3Res":
+                    sf = self.cset.compound[key]
+                else:
+                    sf = self.cset[key]
+                if l == "L1L2L3Res" or l=="L1FastJet":
+                    inputs=[jet.area, jet.eta, jet.pt * raw, rho]
+                else:
+                    inputs=[jet.eta, jet.pt * raw]
+                corr *= float(sf.evaluate(*inputs))
+        #corr = self.getCorrection(jet, rho, delta)
+        
+        #for puppi and uptoLevel==1, len(self.level)==0 and corr==1.0 (no correction, return raw jet pt and mass)
         if corr <= 0:
             return (jet.pt, jet.mass)
         newpt = jet.pt * raw * corr

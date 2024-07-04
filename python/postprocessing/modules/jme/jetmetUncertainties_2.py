@@ -14,74 +14,43 @@ import numpy as np
 import itertools
 ROOT.PyConfig.IgnoreCommandLineOptions = True
 
+def get_corr_inputs(input_dict, corr_obj):
+    """
+    Helper function for getting values of input variables
+    given a dictionary and a correction object.
+    """
+    input_values = [input_dict[inp.name] for inp in corr_obj.inputs]
+    return input_values
 
 class jetmetUncertaintiesProducer(Module):
     def __init__(self,
-                 era,
-                 globalTag,
+                 baseDir,
+                 jecJson,
+                 jecTag,
                  jesUncertainties=["Total"],
-                 archive=None,
-                 globalTagProd=None,
-                 jetType="AK4PFchs",
                  metBranchName="MET",
+                 jerJson="",
                  jerTag="",
+                 algo="",
                  isData=False,
+                 applyJEC=False, #for Run2UL and Run3, nanoaod by default has JEC already applied
                  applySmearing=True,
-                 applyHEMfix=False,
                  splitJER=False,
                  saveMETUncs=['T1', 'T1Smear']
      ):
-
-        # globalTagProd only needs to be defined if METFixEE2017 is to be
-        # recorrected, and should be the GT that was used for the production
-        # of the nanoAOD files
-        self.era = era
+        self.jesUncertainties = jesUncertainties
+        self.jecJson = os.path.join(baseDir, jecJson)
+        self.jerJson = os.path.join(baseDir, "jer_smear.json.gz")
+        self.jecTag = jecTag
+        self.jerTag = jerTag
+        self.algo = algo
         self.isData = isData
-        # if set to true, Jet_pt_nom will have JER applied. not to be
-        # switched on for data.
+        self.applyJEC = applyJEC
         self.applySmearing = applySmearing if not isData else False
-        self.splitJER = splitJER
-        if self.splitJER:
-            self.splitJERIDs = list(range(6))
-        else:
-            self.splitJERIDs = [""]  # "empty" ID for the overall JER
+        
+        #output related
         self.metBranchName = metBranchName
         self.rhoBranchName = "fixedGridRhoFastjetAll"
-        # --------------------------------------------------------------------
-        # CV: globalTag and jetType not yet used in the jet smearer, as there
-        # is no consistent set of txt files for JES uncertainties and JER scale
-        # factors and uncertainties yet
-        # --------------------------------------------------------------------
-
-        self.jesUncertainties = jesUncertainties
-
-        # Calculate and save uncertainties on T1Smear MET if this flag is set
-        # to True. Otherwise calculate and save uncertainties on T1 MET
-        self.saveMETUncs = saveMETUncs
-
-        # smear jet pT to account for measured difference in JER between data
-        # and simulation.
-        if jerTag != "":
-            self.jerInputFileName = jerTag + "_PtResolution_" + jetType + ".txt"
-            self.jerUncertaintyInputFileName = jerTag + "_SF_" + jetType + ".txt"
-        else:
-            print(
-                "WARNING: jerTag is empty!!! This module will soon be " \
-                + "deprecated! Please use jetmetHelperRun2 in the future."
-            )
-            if era == "2016":
-                self.jerInputFileName = "Summer16_25nsV1_MC_PtResolution_" + jetType + ".txt"
-                self.jerUncertaintyInputFileName = "Summer16_25nsV1_MC_SF_" + jetType + ".txt"
-            elif era == "2017" or era == "2018":  # use 2017 JER for 2018 for the time being
-                self.jerInputFileName = "Fall17_V3_MC_PtResolution_" + jetType + ".txt"
-                self.jerUncertaintyInputFileName = "Fall17_V3_MC_SF_" + jetType + ".txt"
-            elif era == "2018" and False:  # jetSmearer not working with 2018 JERs yet
-                self.jerInputFileName = "Autumn18_V7_MC_PtResolution_" + jetType + ".txt"
-                self.jerUncertaintyInputFileName = "Autumn18_V7_MC_SF_" + jetType + ".txt"
-
-        self.jetSmearer = jetSmearer(globalTag, jetType, self.jerInputFileName,
-                                     self.jerUncertaintyInputFileName)
-
         if "AK4" in jetType:
             self.jetBranchName = "Jet"
             self.genJetBranchName = "GenJet"
@@ -89,150 +58,25 @@ class jetmetUncertaintiesProducer(Module):
         else:
             raise ValueError("ERROR: Invalid jet type = '%s'!" % jetType)
         self.lenVar = "n" + self.jetBranchName
-
-        # read jet energy scale (JES) uncertainties
-        # (downloaded from https://twiki.cern.ch/twiki/bin/view/CMS/JECDataMC )
-        self.jesInputArchivePath = os.environ['CMSSW_BASE'] + \
-            "/src/PhysicsTools/NanoAODTools/data/jme/"
-        # Text files are now tarred so must extract first into temporary
-        # directory (gets deleted during python memory management at
-        # script exit)
-        self.jesArchive = tarfile.open(
-            self.jesInputArchivePath + globalTag +
-            ".tgz", "r:gz") if not archive else tarfile.open(
-                self.jesInputArchivePath + archive + ".tgz", "r:gz")
-        self.jesInputFilePath = tempfile.mkdtemp()
-        self.jesArchive.extractall(self.jesInputFilePath)
-
-        # to fully re-calculate type-1 MET the JEC that are currently
-        # applied are also needed. IS THAT EVEN CORRECT?
-
-        if len(jesUncertainties) == 1 and jesUncertainties[0] == "Total":
-            self.jesUncertaintyInputFileName = globalTag + "_Uncertainty_" + jetType + ".txt"
-        elif jesUncertainties[0] == "Merged" and not self.isData:
-            self.jesUncertaintyInputFileName = "Regrouped_" + \
-                globalTag + "_UncertaintySources_" + jetType + ".txt"
+        
+        self.splitJER = splitJER
+        if self.splitJER:
+            self.splitJERIDs = list(range(6))
         else:
-            self.jesUncertaintyInputFileName = globalTag + \
-                "_UncertaintySources_" + jetType + ".txt"
-
-        # read all uncertainty source names from the loaded file
-        if jesUncertainties[0] in ["All", "Merged"]:
-            with open(self.jesInputFilePath + '/' +
-                      self.jesUncertaintyInputFileName) as f:
-                lines = f.read().split("\n")
-                sources = [
-                    x for x in lines if x.startswith("[") and x.endswith("]")
-                ]
-                sources = [x[1:-1] for x in sources]
-                self.jesUncertainties = sources
-        if applyHEMfix:
-            self.jesUncertainties.append("HEMIssue")
-
-        # Define the jet recalibrator
-        self.jetReCalibrator = JetReCalibrator(
-            globalTag,
-            jetType,
-            True,
-            self.jesInputFilePath,
-            calculateSeparateCorrections=False,
-            calculateType1METCorrection=False)
-
-        # Define the recalibrator for level 1 corrections only
-        self.jetReCalibratorL1 = JetReCalibrator(
-            globalTag,
-            jetType,
-            False,
-            self.jesInputFilePath,
-            calculateSeparateCorrections=True,
-            calculateType1METCorrection=False,
-            upToLevel=1)
-
-        # Define the recalibrators for GT used in nanoAOD production
-        # (only needed to reproduce 2017 v2 MET)
-        if globalTagProd:
-            self.jetReCalibratorProd = JetReCalibrator(
-                globalTagProd,
-                jetType,
-                True,
-                self.jesInputFilePath,
-                calculateSeparateCorrections=False,
-                calculateType1METCorrection=False)
-            self.jetReCalibratorProdL1 = JetReCalibrator(
-                globalTagProd,
-                jetType,
-                False,
-                self.jesInputFilePath,
-                calculateSeparateCorrections=True,
-                calculateType1METCorrection=False,
-                upToLevel=1)
-        else:
-            self.jetReCalibratorProd = False
-            self.jetReCalibratorProdL1 = False
-
-        # define energy threshold below which jets are considered as "unclustered energy"
-        # cf. JetMETCorrections/Type1MET/python/correctionTermsPfMetType1Type2_cff.py
-        self.unclEnThreshold = 15.
-
-        # load libraries for accessing JES scale factors and uncertainties
-        # from txt files
-        for library in [
-                "libCondFormatsJetMETObjects", "libPhysicsToolsNanoAODTools"
-        ]:
-            if library not in ROOT.gSystem.GetLibraries():
-                print("Load Library '%s'" % library.replace("lib", ""))
-                ROOT.gSystem.Load(library)
-
-    def getJERsplitID(self, pt, eta):
-        if not self.splitJER:
-            return ""
-        if abs(eta) < 1.93:
-            return 0
-        elif abs(eta) < 2.5:
-            return 1
-        elif abs(eta) < 3:
-            if pt < 50:
-                return 2
-            else:
-                return 3
-        else:
-            if pt < 50:
-                return 4
-            else:
-                return 5
+            self.splitJERIDs = [""]  # "empty" ID for the overall JER
+        
 
     def beginJob(self):
 
         print("Loading jet energy scale (JES) uncertainties from file '%s'" %
-              os.path.join(self.jesInputFilePath,
-                           self.jesUncertaintyInputFileName))
-        #self.jesUncertainty = ROOT.JetCorrectionUncertainty(os.path.join(self.jesInputFilePath, self.jesUncertaintyInputFileName))
-
-        self.jesUncertainty = {}
-        # implementation didn't seem to work for factorized JEC,
-        # try again another way
-        for jesUncertainty in self.jesUncertainties:
-            jesUncertainty_label = jesUncertainty
-            if jesUncertainty == "Total" and (
-                    len(self.jesUncertainties) == 1 or
-                (len(self.jesUncertainties) == 2
-                 and "HEMIssue" in self.jesUncertainties)):
-                jesUncertainty_label = ''
-            if jesUncertainty != "HEMIssue":
-                pars = ROOT.JetCorrectorParameters(
-                    os.path.join(self.jesInputFilePath,
-                                 self.jesUncertaintyInputFileName),
-                    jesUncertainty_label)
-                self.jesUncertainty[
-                    jesUncertainty] = ROOT.JetCorrectionUncertainty(pars)
-
-        if not self.isData:
-            self.jetSmearer.beginJob()
+              self.jecJson)
+        self.cset = core.CorrectionSet.from_file(jecJson)
+        if self.applySmearing:
+            self.cset_jersmear = core.CorrectionSet.from_file(self.jerJson)
+        
 
     def endJob(self):
-        if not self.isData:
-            self.jetSmearer.endJob()
-        shutil.rmtree(self.jesInputFilePath)
+        pass
 
     def beginFile(self, inputFile, outputFile, inputTree, wrappedOutputTree):
         self.out = wrappedOutputTree
@@ -272,6 +116,7 @@ class jetmetUncertaintiesProducer(Module):
                                     (self.jetBranchName, jerID, shift),
                                     "F",
                                     lenVar=self.lenVar)
+                    #met
                     if 'T1' in self.saveMETUncs:
                         self.out.branch(
                             "%s_T1_pt_jer%s%s" %
@@ -298,6 +143,7 @@ class jetmetUncertaintiesProducer(Module):
                         (self.jetBranchName, jesUncertainty, shift),
                         "F",
                         lenVar=self.lenVar)
+                    #met
                     if 'T1' in self.saveMETUncs:
                         self.out.branch(
                             "%s_T1_pt_jes%s%s" %
@@ -313,6 +159,7 @@ class jetmetUncertaintiesProducer(Module):
                             "%s_T1Smear_phi_jes%s%s" %
                             (self.metBranchName, jesUncertainty, shift), "F")
 
+                #met unclust
                 self.out.branch(
                     "%s_T1_pt_unclustEn%s" % (self.metBranchName, shift), "F")
                 self.out.branch(
@@ -322,8 +169,6 @@ class jetmetUncertaintiesProducer(Module):
                 self.out.branch(
                     "%s_T1Smear_phi_unclustEn%s" % (self.metBranchName, shift), "F")
 
-        self.isV5NanoAOD = hasattr(inputTree, "Jet_muonSubtrFactor")
-        print("nanoAODv5 or higher: " + str(self.isV5NanoAOD))
 
     def endFile(self, inputFile, outputFile, inputTree, wrappedOutputTree):
         pass
@@ -334,7 +179,7 @@ class jetmetUncertaintiesProducer(Module):
         jets = Collection(event, self.jetBranchName)
         nJet = event.nJet
         lowPtJets = Collection(event,
-                               "CorrT1METJet") if self.isV5NanoAOD else []
+                               "CorrT1METJet")
         # to subtract out of the jets for proper type-1 MET corrections
         muons = Collection(event, "Muon")
         if not self.isData:
@@ -349,9 +194,7 @@ class jetmetUncertaintiesProducer(Module):
             # are kept in nanoAOD
             jet.neEmEF = 0
             jet.chEmEF = 0
-
-        if not self.isData:
-            self.jetSmearer.setSeed(event)
+        # !!!!! is lowptjet still needed?
 
         jets_pt_raw = []
         jets_pt_jer = []
@@ -435,22 +278,26 @@ class jetmetUncertaintiesProducer(Module):
                 met_T1Smear_px_jesDown[jesUncertainty] = met_px
                 met_T1Smear_py_jesDown[jesUncertainty] = met_py
 
-        # variables needed for re-applying JECs to 2017 v2 MET
-        delta_x_T1Jet, delta_y_T1Jet = 0, 0
-        delta_x_rawJet, delta_y_rawJet = 0, 0
-
         rho = getattr(event, self.rhoBranchName)
 
         # match reconstructed jets to generator level ones
         # (needed to evaluate JER scale factors and uncertainties)
         def resolution_matching(jet, genjet):
             '''Helper function to match to gen based on pt difference'''
-            params = ROOT.PyJetParametersWrapper()
-            params.setJetEta(jet.eta)
-            params.setJetPt(jet.pt)
-            params.setRho(rho)
+            #params = ROOT.PyJetParametersWrapper()
+            #params.setJetEta(jet.eta)
+            #params.setJetPt(jet.pt)
+            #params.setRho(rho)
+            #resolution = self.jetSmearer.jer.getResolution(params)
+            
+            key = "{}_{}_{}".format(self.jerTag, "PtResolution", self.algo)
+            sf = self.cset[key]
 
-            resolution = self.jetSmearer.jer.getResolution(params)
+            sf_input_names = [inp.name for inp in sf.inputs]
+            print("Inputs: " + ", ".join(sf_input_names))
+
+            inputs = get_corr_inputs(example_value_dict, sf)
+            jer_value = sf.evaluate(*inputs)
 
             return abs(jet.pt - genjet.pt) < 3 * resolution * jet.pt
 
@@ -464,6 +311,10 @@ class jetmetUncertaintiesProducer(Module):
                                                dRmax=0.2,
                                                presel=resolution_matching)
             pairs.update(lowPtPairs)
+            
+            ###
+            #pairs is a dict every every jet/lowPtJet is a key, and if matched the v is a genjet object / genjet.p4 TLorentzVector, if unmatched the v is None
+            
 
         for iJet, jet in enumerate(itertools.chain(jets, lowPtJets)):
             # jet pt and mass corrections

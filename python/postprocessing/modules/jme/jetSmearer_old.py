@@ -9,16 +9,16 @@ import tempfile
 import shutil
 import numpy as np
 ROOT.PyConfig.IgnoreCommandLineOptions = True
-import correctionlib._core as core
+
 
 class jetSmearer(Module):
     def __init__(
             self,
-            era,
             globalTag,
-            jerTag,
-            jetType,
-            ):
+            jetType="AK4PFchs",
+            jerInputFileName="Spring16_25nsV10_MC_PtResolution_AK4PFchs.txt",
+            jerUncertaintyInputFileName="Spring16_25nsV10_MC_SF_AK4PFchs.txt",
+            jmr_vals=[1.09, 1.14, 1.04]):
 
         # -------------------------------------------------------------------
         # CV: globalTag and jetType not yet used, as there is no consistent
@@ -29,47 +29,58 @@ class jetSmearer(Module):
         # read jet energy resolution (JER) and JER scale factors and uncertainties
         # (the txt files were downloaded from https://github.com/cms-jet/JRDatabase/tree/master/textFiles/ )
         # Text files are now tarred so must extract first
+        self.jerInputArchivePath = os.environ['CMSSW_BASE'] + \
+            "/src/PhysicsTools/NanoAODTools/data/jme/"
+        self.jerTag = jerInputFileName[:jerInputFileName.find('_MC_') +
+                                       len('_MC')]
+        self.jerArchive = tarfile.open(
+            self.jerInputArchivePath + self.jerTag + ".tgz", "r:gz")
+        self.jerInputFilePath = tempfile.mkdtemp()
+        self.jerArchive.extractall(self.jerInputFilePath)
+        self.jerInputFileName = jerInputFileName
+        self.jerUncertaintyInputFileName = jerUncertaintyInputFileName
+
+        self.jmr_vals = jmr_vals
+
+        self.params_sf_and_uncertainty = ROOT.PyJetParametersWrapper()
+        self.params_resolution = ROOT.PyJetParametersWrapper()
 
         # initialize random number generator
         # (needed for jet pT smearing)
-        self.era = era
-        self.jecTag = globalTag
-        self.jerTag = jerTag
-        
-        self.jetType = jetType
-        if "AK8" in jetType:
-            if "16" in era or "17" in era or "18" in era: #run2
-                self.jetType="AK4PFchs" #only this is available for run2 
-            elif "22" in era or "23" in era:
-                self.jetType="AK4PFPuppi"
-            
-        
         self.rnd = ROOT.TRandom3(12345)
-        self.pogdir = "/cvmfs/cms.cern.ch/rsync/cms-nanoAOD/jsonpog-integration/"
-        #jmr_vals=[1.09, 1.14, 1.04]?
-        
+
+        # load libraries for accessing JER scale factors and uncertainties from txt files
+        for library in [
+                "libCondFormatsJetMETObjects", "libPhysicsToolsNanoAODTools"
+        ]:
+            if library not in ROOT.gSystem.GetLibraries():
+                print("Load Library '%s'" % library.replace("lib", ""))
+                ROOT.gSystem.Load(library)
+
+        self.puppiJMRFile = ROOT.TFile.Open(
+            os.environ['CMSSW_BASE'] +
+            "/src/PhysicsTools/NanoAODTools/data/jme/puppiSoftdropResol.root")
+        self.puppisd_resolution_cen = self.puppiJMRFile.Get(
+            "massResolution_0eta1v3")
+        self.puppisd_resolution_for = self.puppiJMRFile.Get(
+            "massResolution_1v3eta2v5")
 
     def beginJob(self):
         # initialize JER scale factors and uncertainties
         # (cf. PhysicsTools/PatUtils/interface/SmearedJetProducerT.h )
-        #fname_jersmear = os.path.join(self.pogdir, "POG/JME/jer_smear.json.gz")
-        #print("\n jetSmearer Loading JSON file: {}".format(fname_jersmear))
-        #self.cset_jersmear = core.CorrectionSet.from_file(fname_jersmear)
-        
-        #used for jet sf and pt resolution
-        if "AK4" in self.jetType:
-            fname = os.path.join(self.pogdir, f"POG/JME/{self.era}/jet_jerc.json.gz")
-            print("\n jetSmearer Loading JSON file: {}".format(fname))
-            self.cset = core.CorrectionSet.from_file(os.path.join(fname))
-        elif "AK8" in self.jetType:
-        # AK8
-            #fname_ak8 = os.path.join(__this_dir__, f"POG/JME/{self.era}/fatJet_jerc.json.gz")
-            fname_ak8 = os.path.join(self.pogdir, f"POG/JME/{self.era}/jet_jerc.json.gz")
-            print("\n jetSmearer Loading JSON file: {}".format(fname_ak8))
-            self.cset = core.CorrectionSet.from_file(os.path.join(fname_ak8))
+        print("Loading jet energy resolutions (JER) from file '%s'" %
+              os.path.join(self.jerInputFilePath, self.jerInputFileName))
+        self.jer = ROOT.PyJetResolutionWrapper(
+            os.path.join(self.jerInputFilePath, self.jerInputFileName))
+        print("Loading JER scale factors and uncertainties from file '%s'" %
+              os.path.join(self.jerInputFilePath,
+                           self.jerUncertaintyInputFileName))
+        self.jerSF_and_Uncertainty = ROOT.PyJetResolutionScaleFactorWrapper(
+            os.path.join(self.jerInputFilePath,
+                         self.jerUncertaintyInputFileName))
 
     def endJob(self):
-        pass
+        shutil.rmtree(self.jerInputFilePath)
 
     def setSeed(self, event):
         """Set seed deterministically."""
@@ -114,21 +125,21 @@ class jetSmearer(Module):
         # --------------------------------------------------------------------------------------------
         # CV: define enums needed to access JER scale factors and uncertainties
         #    (cf. CondFormats/JetMETObjects/interface/JetResolutionObject.h)
-        enum_nominal = 'nom'
-        enum_shift_up = 'up'
-        enum_shift_down = 'down'
+        enum_nominal = 0
+        enum_shift_up = 2
+        enum_shift_down = 1
         # --------------------------------------------------------------------------------------------
 
         jet_pt_sf_and_uncertainty = {}
         for enum_central_or_shift in [
                 enum_nominal, enum_shift_up, enum_shift_down
         ]:
-            key = "{}_{}_{}".format(self.jerTag, "ScaleFactor", self.jetType)
-            sf = self.cset[key]
-            inputs = [jet.Eta(), enum_central_or_shift]
-            jersf_value = sf.evaluate(*inputs)
+            self.params_sf_and_uncertainty.setJetEta(jet.Eta())
+            # Added bc. of pt dependency in 2018. Thanks to kschweiger!
+            self.params_sf_and_uncertainty.setJetPt(jet.Pt())
             jet_pt_sf_and_uncertainty[
-                enum_central_or_shift] = jersf_value
+                enum_central_or_shift] = self.jerSF_and_Uncertainty.getScaleFactor(
+                    self.params_sf_and_uncertainty, enum_central_or_shift)
 
         smear_vals = {}
         if genJet:
@@ -144,10 +155,10 @@ class jetSmearer(Module):
                     (jet_pt_sf_and_uncertainty[central_or_shift] - 1.) * dPt /  jet.Perp()
                 smear_vals[central_or_shift] = smearFactor
         else:
-            key = "{}_{}_{}".format(self.jerTag, "PtResolution", self.jetType)
-            sf = self.cset[key]
-            inputs = [jet.Eta(), jet.Perp(), rho]
-            jet_pt_resolution = sf.evaluate(*inputs)
+            self.params_resolution.setJetPt(jet.Perp())
+            self.params_resolution.setJetEta(jet.Eta())
+            self.params_resolution.setRho(rho)
+            jet_pt_resolution = self.jer.getResolution(self.params_resolution)
 
             rand = self.rnd.Gaus(0, jet_pt_resolution)
             for central_or_shift in [
@@ -214,21 +225,15 @@ class jetSmearer(Module):
         # ---------------------------------------------------------------------
         # CV: define enums needed to access JER scale factors and uncertainties
         #    (cf. CondFormats/JetMETObjects/interface/JetResolutionObject.h)
-        enum_nominal = 'nom'
-        enum_shift_up = 'up'
-        enum_shift_down = 'down'
+        enum_nominal = 0
+        enum_shift_up = 2
+        enum_shift_down = 1
         # ---------------------------------------------------------------------
 
-        jet_m_sf_and_uncertainty = {}
-        for enum_central_or_shift in [
-                enum_nominal, enum_shift_up, enum_shift_up
-        ]:
-            key = "{}_{}_{}".format(self.jerTag, "ScaleFactor", self.jetTpe)
-            sf = self.cset[key]
-            inputs = [jet.Eta(), enum_central_or_shift]
-            jersf_value = sf.evaluate(*inputs)
-            jet_m_sf_and_uncertainty[
-                enum_central_or_shift] = jersf_value
+        jet_m_sf_and_uncertainty = dict(
+            list(
+                zip([enum_nominal, enum_shift_up, enum_shift_down],
+                    self.jmr_vals)))
 
         smear_vals = {}
         if genJet:
@@ -250,22 +255,11 @@ class jetSmearer(Module):
                 smear_vals[central_or_shift] = smearFactor
 
         else:
-            
             # Get mass resolution
-            key = "{}_{}_{}".format(self.jerTag, "PtResolution", self.jetType)
-            sf = self.cset[key]
-            inputs = [jet.Eta(), jet.Perp(), rho]
-            jet_m_resolution = sf.evaluate(*inputs)
-            
-            #if abs(jet.Eta()) <= 1.3:
-            #    jet_m_resolution = self.puppisd_resolution_cen.Eval(jet.Pt())
-            #else:
-            #    jet_m_resolution = self.puppisd_resolution_for.Eval(jet.Pt())
-            
-            #only ptresolution is available. 
-            #https://gitlab.cern.ch/cms-nanoAOD/jsonpog-integration/-/blob/master/examples/jercExample.py
-            #instructed to use the same smear factor as pt for mass
-            
+            if abs(jet.Eta()) <= 1.3:
+                jet_m_resolution = self.puppisd_resolution_cen.Eval(jet.Pt())
+            else:
+                jet_m_resolution = self.puppisd_resolution_for.Eval(jet.Pt())
             rand = self.rnd.Gaus(0, jet_m_resolution)
             for central_or_shift in [
                     enum_nominal, enum_shift_up, enum_shift_down

@@ -14,7 +14,7 @@ import numpy as np
 ROOT.PyConfig.IgnoreCommandLineOptions = True
 
 
-class fatJetUncertaintiesProducer(Module):
+class _deprecated_fatJetUncertaintiesProducer(Module):
     def __init__(
             self,
             era,
