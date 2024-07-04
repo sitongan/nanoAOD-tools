@@ -18,7 +18,10 @@ class btagSFProducer(Module):
         eramap = {"UL2016_preVFP": "2016preVFP_UL",
                    "UL2016":"2016postVFP_UL",
                    "UL2017":"2017_UL",
-                   "UL2018":"2018_UL"}
+                   "UL2018":"2018_UL",
+                  #PRELIMINARY
+                   "2022":"2022_Summer22",
+                   "2022EE":"2022_Summer22EE"}
         
         
         self.era = eramap[era]

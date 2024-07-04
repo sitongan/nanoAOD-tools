@@ -18,7 +18,11 @@ class puWeightProducer(Module):
         eramap = {"UL2016_preVFP": "2016preVFP_UL",
            "UL2016":"2016postVFP_UL",
            "UL2017":"2017_UL",
-           "UL2018":"2018_UL"}
+           "UL2018":"2018_UL",
+           "2022": "2022_Summer22",
+           "2022EE": "2022_Summer22EE",
+           "2023": "2023_Summer23",
+           "2023BPix":"2023_Summer23BPix"}
         self.era = eramap[era]
         self.name = name
         self.norm = norm
@@ -74,5 +78,21 @@ puWeight2017_UL = lambda: puWeightProducer("UL2017",
                                            doSysVar=True)
 
 puWeight2018_UL = lambda: puWeightProducer("UL2018",
+                                           verbose=False,
+                                           doSysVar=True)
+
+puWeight2022 = lambda: puWeightProducer("2022",
+                                           verbose=False,
+                                           doSysVar=True)
+
+puWeight2022EE = lambda: puWeightProducer("2022EE",
+                                           verbose=False,
+                                           doSysVar=True)
+
+puWeight2023 = lambda: puWeightProducer("2023",
+                                           verbose=False,
+                                           doSysVar=True)
+
+puWeight2023BPix = lambda: puWeightProducer("2023BPix",
                                            verbose=False,
                                            doSysVar=True)
