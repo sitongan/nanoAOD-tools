@@ -23,6 +23,11 @@ class btagSFProducer(Module):
                    "2022":"2022_Summer22",
                    "2022EE":"2022_Summer22EE"}
         
+        if era.startswith("UL"):
+            self.run = 2
+        else:
+            self.run = 3
+        
         
         self.era = eramap[era]
         self.algo = algo
@@ -144,7 +149,12 @@ class btagSFProducer(Module):
                     sfs = np.ones_like(jet_pt)
                     light_jets = np.where(jet_flav == 0)
                     non_light_jets = np.where(jet_flav != 0)
-                    sfs[light_jets] = self.calibration[self.algo + "_incl"].evaluate(central_or_syst, wp, jet_flav[light_jets], jet_eta[light_jets], jet_pt[light_jets])
+                    
+                    if self.run == 2:
+                        sfs[light_jets] = self.calibration[self.algo + "_incl"].evaluate(central_or_syst, wp, jet_flav[light_jets], jet_eta[light_jets], jet_pt[light_jets])
+                    else: #run3
+                        sfs[light_jets] = self.calibration[self.algo + "_light"].evaluate(central_or_syst, wp, jet_flav[light_jets], jet_eta[light_jets], jet_pt[light_jets])
+                    
                     sfs[non_light_jets] = self.calibration[self.algo + "_comb"].evaluate(central_or_syst, wp, jet_flav[non_light_jets], jet_eta[non_light_jets], jet_pt[non_light_jets])
                     sfs[np.where(sfs < 0.01)] = 1.0
                     self.out.fillBranch(self.branchNames_central_and_systs[wp][central_or_syst], list(sfs))
@@ -156,6 +166,8 @@ btagSF2016_UL_preVFP = lambda: btagSFProducer("UL2016_preVFP")
 btagSF2016_UL_postVFP = lambda: btagSFProducer("UL2016")
 btagSF2017_UL = lambda: btagSFProducer("UL2017")
 btagSF2018_UL = lambda: btagSFProducer("UL2018")
+btagSF2022 = lambda: btagSFProducer("2022")
+btagSF2022EE = lambda: btagSFProducer("2022EE")
                     
                 
                 
