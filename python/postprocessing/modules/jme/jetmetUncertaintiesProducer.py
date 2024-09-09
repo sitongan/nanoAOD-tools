@@ -30,13 +30,20 @@ class jetmetUncertaintiesProducer(Module):
                  saveMETUncs=['T1', 'T1Smear']
      ):
 
+        if "16" in era or "17" in era or "18" in era: #run2
+            self.run=2
+            self.rhoBranchName = "fixedGridRhoFastjetAll"
+        elif "22" in era or "23" in era:
+            self.run=3
+            self.rhoBranchName = "Rho_fixedGridRhoFastjetAll"
+        
         if "AK8" in jetType:
-            if "16" in era or "17" in era or "18" in era: #run2
+            if self.run==2:
                 self.replacement_jetType="AK4PFchs" #only this is available for run2 
-            elif "22" in era or "23" in era:
+                
+            elif self.run==3:
                 self.replacement_jetType="AK4PFPuppi"
-        
-        
+
         
         self.jecTag = globalTag
         self.jerTag = jerTag
@@ -51,7 +58,8 @@ class jetmetUncertaintiesProducer(Module):
         else:
             self.splitJERIDs = [""]  # "empty" ID for the overall JER
         self.metBranchName = metBranchName
-        self.rhoBranchName = "fixedGridRhoFastjetAll"
+        
+        
         # --------------------------------------------------------------------
         # CV: globalTag and jetType not yet used in the jet smearer, as there
         # is no consistent set of txt files for JES uncertainties and JER scale
@@ -451,9 +459,11 @@ class jetmetUncertaintiesProducer(Module):
             # https://twiki.cern.ch/twiki/bin/view/CMSPublic/WorkBookJetEnergyResolution
             if not self.isData:
                 # Get the smearing factors for MET correction
+                #print(jet, genJet, rho)
                 (jet_pt_jerNomVal, jet_pt_jerUpVal,
                  jet_pt_jerDownVal) = self.jetSmearer.getSmearValsPt(
                      jet, genJet, rho)
+                
             else:
                 # if you want to do something with JER in data, please add it here.
                 (jet_pt_jerNomVal, jet_pt_jerUpVal, jet_pt_jerDownVal) = (1, 1,
@@ -918,3 +928,9 @@ jetmetUncertaintiesUL2018 = lambda: jetmetUncertaintiesProducer(
 
 jetmetUncertaintiesUL2018_fj = lambda: jetmetUncertaintiesProducer(
     "2018_UL", "Summer19UL18_V5_MC", jerTag="Summer19UL18_JRV2_MC", jetType="AK8PFPuppi")
+
+jetmetUncertaintiesUL2022 = lambda: jetmetUncertaintiesProducer(
+    "2022_Summer22", "Summer22_22Sep2023_V2_MC", jerTag="Summer22_22Sep2023_JRV1_MC", jetType="AK4PFPuppi")
+
+jetmetUncertaintiesUL2022_fj = lambda: jetmetUncertaintiesProducer(
+    "2022_Summer22", "Summer22_22Sep2023_V2_MC", jerTag="Summer22_22Sep2023_JRV1_MC", jetType="AK8PFPuppi")

@@ -37,10 +37,13 @@ class jetSmearer(Module):
         self.jerTag = jerTag
         
         self.jetType = jetType
-        if "AK8" in jetType:
+        #if "AK8" in jetType:
+        if True:
             if "16" in era or "17" in era or "18" in era: #run2
+                self.run=2
                 self.jetType="AK4PFchs" #only this is available for run2 
             elif "22" in era or "23" in era:
+                self.run=3
                 self.jetType="AK4PFPuppi"
             
         
@@ -124,8 +127,13 @@ class jetSmearer(Module):
                 enum_nominal, enum_shift_up, enum_shift_down
         ]:
             key = "{}_{}_{}".format(self.jerTag, "ScaleFactor", self.jetType)
+            #print(key)
             sf = self.cset[key]
-            inputs = [jet.Eta(), enum_central_or_shift]
+            if self.run == 2:
+                inputs = [jet.Eta(), enum_central_or_shift]
+            elif self.run == 3:
+                inputs = [jet.Eta(),jet.Perp(), enum_central_or_shift]
+            #print(inputs)
             jersf_value = sf.evaluate(*inputs)
             jet_pt_sf_and_uncertainty[
                 enum_central_or_shift] = jersf_value
